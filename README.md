@@ -63,8 +63,7 @@ winget install ffmpeg
 video-frame-analyzer/
 ├── gui_analyzer.py      ← GUI 主程序
 ├── video_analyzer.py    ← 命令行版（无GUI）
-├── build.bat            ← Windows 打包（文件夹模式）
-├── build_single.bat     ← Windows 打包（单文件模式）
+├── build.bat            ← Windows 打包
 └── README.md
 ```
 
