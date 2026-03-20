@@ -40,11 +40,7 @@ python gui_analyzer.py
 ### 方式二：打包为 EXE
 
 ```cmd
-# 方式A：打包为文件夹（推荐，体积小，启动快）
 build.bat
-
-# 方式B：打包为单个 .exe（体积大，便于分发）
-build_single.bat
 ```
 
 打包输出在 `dist\` 目录下。
