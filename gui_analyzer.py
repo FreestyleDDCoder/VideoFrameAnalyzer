@@ -335,11 +335,6 @@ class VideoAnalyzer:
         for iv in pts_iv:
             hist[round(iv * 1000)] += 1
 
-        # 帧间间隔异常检测（>33ms）
-        frame_intervals = [f["interval_ms"] for f in vf if f["interval_ms"] is not None]
-        anomaly_intervals = [iv for iv in frame_intervals if iv > 33]
-        interval_anomaly_ratio = len(anomaly_intervals) / len(frame_intervals) if frame_intervals else 0
-
         # 交织帧统计
         interlaced_count = sum(1 for f in vf if f.get("interlaced"))
 
@@ -355,11 +350,22 @@ class VideoAnalyzer:
             m = avg(lst)
             return math.sqrt(sum((x - m)**2 for x in lst) / len(lst))
 
+        avg_pts_interval = avg(pts_iv)
+        avg_fps = (1 / avg_pts_interval) if avg_pts_interval > 0 else 0
+        anomaly_threshold_ms = max(1, int(avg_pts_interval * 1000)) if avg_pts_interval > 0 else 33
+
+        # 帧间间隔异常检测（基于平均帧率动态推导）
+        frame_intervals = [f["interval_ms"] for f in vf if f["interval_ms"] is not None]
+        anomaly_intervals = [iv for iv in frame_intervals if iv > anomaly_threshold_ms]
+        interval_anomaly_ratio = len(anomaly_intervals) / len(frame_intervals) if frame_intervals else 0
+
         self.video_stats = {
             "total_frames": len(vf),
             "duration_sec": max(pts_t) - min(pts_t) if len(pts_t) > 1 else 0,
             "pts_range": (min(pts_t), max(pts_t)) if pts_t else (0, 0),
-            "avg_pts_interval": avg(pts_iv),
+            "avg_pts_interval": avg_pts_interval,
+            "avg_fps": avg_fps,
+            "anomaly_interval_threshold_ms": anomaly_threshold_ms,
             "min_pts_interval": min(pts_iv) if pts_iv else 0,
             "max_pts_interval": max(pts_iv) if pts_iv else 0,
             "std_pts_interval": std(pts_iv),
@@ -486,10 +492,11 @@ class VideoAnalyzer:
         # 4. 丢帧检测 (PTS 间隔突然变大)
         interval_anomaly = self.video_stats.get("anomaly_interval_count", 0)
         ratio = self.video_stats.get("interval_anomaly_ratio", 0)
+        threshold_ms = self.video_stats.get("anomaly_interval_threshold_ms", 33)
         if ratio > 0.01:
-            issues.append({"level": "warn", "msg": f"帧间隔异常 (>33ms): {interval_anomaly} 帧 ({ratio*100:.2f}%)"})
+            issues.append({"level": "warn", "msg": f"帧间隔异常 (>{threshold_ms}ms): {interval_anomaly} 帧 ({ratio*100:.2f}%)"})
         elif interval_anomaly > 0:
-            issues.append({"level": "info", "msg": f"帧间隔轻微异常: {interval_anomaly} 帧 ({ratio*100:.3f}%)"})
+            issues.append({"level": "info", "msg": f"帧间隔轻微异常 (>{threshold_ms}ms): {interval_anomaly} 帧 ({ratio*100:.3f}%)"})
 
         # 5. 起始时间偏移
         first_pts = vf[0]["pts_time"]
@@ -697,6 +704,31 @@ def generate_html_report(filepath, analyzer):
         br = int(br)
         return f"{br/1e6:.2f} Mbps" if br > 1e6 else f"{br/1e3:.0f} kbps" if br > 1e3 else f"{br} bps"
 
+    def parse_fps_value(value):
+        if value in (None, "", "0/0"):
+            return 0
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if "/" in text:
+            try:
+                num, den = text.split("/", 1)
+                num = float(num)
+                den = float(den)
+                return (num / den) if den else 0
+            except (TypeError, ValueError, ZeroDivisionError):
+                return 0
+        try:
+            return float(text)
+        except ValueError:
+            return 0
+
+    def fmt_fps(value):
+        fps = parse_fps_value(value)
+        if fps <= 0:
+            return "-"
+        return f"{fps:.3f}".rstrip("0").rstrip(".") + " fps"
+
     # ── 收集 HTML 片段 ──
     sections = []
 
@@ -725,6 +757,12 @@ def generate_html_report(filepath, analyzer):
     ci_dur = ci.get('duration', '')
     if not ci_dur and vs.get('duration_sec', 0) > 0:
         ci_dur = str(vs['duration_sec'])
+    avg_fps = (
+        vs.get('avg_fps')
+        or parse_fps_value(video_stream.get('avg_frame_rate'))
+        or parse_fps_value(video_stream.get('r_frame_rate'))
+    )
+    anomaly_threshold_ms = vs.get('anomaly_interval_threshold_ms', 33)
 
     sections.append(f"""
     <div class="cards">
@@ -732,6 +770,7 @@ def generate_html_report(filepath, analyzer):
       <div class="card"><div class="cl">总时长</div><div class="cv c">{fmt_dur(ci_dur)}</div></div>
       <div class="card"><div class="cl">文件大小</div><div class="cv p">{fmt_size(filesize)}</div></div>
       <div class="card"><div class="cl">总码率</div><div class="cv y">{fmt_br(ci.get('bit_rate'))}</div></div>
+      <div class="card"><div class="cl">平均帧率</div><div class="cv c">{fmt_fps(avg_fps)}</div></div>
       <div class="card"><div class="cl">视频帧数</div><div class="cv r">{total_vf:,}</div></div>
       <div class="card"><div class="cl">音频帧数</div><div class="cv g">{analyzer.audio_stats.get('total_frames',0):,}</div></div>
       <div class="card"><div class="cl">流总数</div><div class="cv b">{len(si)}</div></div>
@@ -785,7 +824,7 @@ def generate_html_report(filepath, analyzer):
         <div class="card"><div class="cl">DTS-PTS 偏移</div><div class="cv p">{vs.get('avg_dts_pts_offset',0)*1000:.2f}ms</div>
           <div class="ch">范围 [{vs.get('min_dts_pts_offset',0)*1000:.1f}, {vs.get('max_dts_pts_offset',0)*1000:.1f}]ms</div></div>
         <div class="card"><div class="cl">平均帧时长</div><div class="cv c">{vs.get('avg_duration',0)*1000:.3f}ms</div></div>
-        <div class="card"><div class="cl">帧间隔异常 (&gt;33ms)</div><div class="cv" style="color:#f87171">{vs.get('anomaly_interval_count',0):,}帧</div>
+        <div class="card"><div class="cl">帧间隔异常 (&gt;{anomaly_threshold_ms}ms)</div><div class="cv" style="color:#f87171">{vs.get('anomaly_interval_count',0):,}帧</div>
           <div class="ch">占比 {vs.get('interval_anomaly_ratio',0)*100:.2f}%</div></div>
         <div class="card"><div class="cl">交织帧</div><div class="cv o">{vs.get('interlaced_count',0):,}</div></div>
       </div>
@@ -901,10 +940,10 @@ def generate_html_report(filepath, analyzer):
 
         sections.append(f"""
     <div class="sec"><h2>📋 帧级数据表</h2>
-      <p class="desc">共 {len(vf):,} 帧 · 支持搜索、筛选、排序 · <span style="color:#f87171">⚠ 红色标记为间隔 &gt;33ms 的异常帧</span></p>
+      <p class="desc">共 {len(vf):,} 帧 · 支持搜索、筛选、排序 · <span style="color:#f87171">⚠ 红色标记为间隔 &gt;{anomaly_threshold_ms}ms 的异常帧</span></p>
       <div class="search-row">
         <input type="text" id="frameSearch" placeholder="搜索帧号、时间、类型...">
-        <select id="frameFilter"><option value="">全部</option><option value="I">I帧</option><option value="P">P帧</option><option value="B">B帧</option><option value="kf">关键帧</option><option value="anomaly">间隔异常(&gt;33ms)</option></select>
+        <select id="frameFilter"><option value="">全部</option><option value="I">I帧</option><option value="P">P帧</option><option value="B">B帧</option><option value="kf">关键帧</option><option value="anomaly">间隔异常(&gt;{anomaly_threshold_ms}ms)</option></select>
       </div>
       <div class="tbl-wrap"><table id="frameTable"><thead><tr>
         <th data-col="0">#</th><th data-col="1">PTS</th><th data-col="2">PTS时间(s)</th>
@@ -978,6 +1017,7 @@ def generate_html_report(filepath, analyzer):
 
     js_data_parts.append(f"const TOTAL_VF={total_vf};")
     js_data_parts.append(f"const IC={ic};const PC={pc};const BC={bc};")
+    js_data_parts.append(f"const ANOMALY_THRESHOLD_MS={anomaly_threshold_ms};")
 
     if vs.get('interval_histogram'):
         js_data_parts.append(f"const HIST={json.dumps(vs['interval_histogram'])};")
@@ -1156,7 +1196,7 @@ if(Object.keys(HIST).length>0 && document.getElementById('chartHist')){{
 // Frame table
 if(VF.length>0){{
   const tbody=document.getElementById('frameBody');
-  const allR=VF.map((f,i)=>({{html:`<tr class="${{f.kf?'kf':''}}${{f.interval!==null&&f.interval>33?' interval-anomaly':''}}"><td>${{i}}</td><td>${{(f.pts_t*90000).toFixed(0)}}</td><td>${{f.pts_t.toFixed(6)}}</td><td>${{(f.dts_t*90000).toFixed(0)}}</td><td>${{f.dts_t.toFixed(6)}}</td><td>${{(f.dts_pts*1000).toFixed(2)}}</td><td class="type-${{f.type}}">${{f.type}}</td><td>${{f.kf?'✅':'-'}}</td><td>${{(f.dur*1000).toFixed(2)}}</td><td>${{f.size.toLocaleString()}}</td><td${{f.interval!==null&&f.interval>33?' style="color:#f87171;font-weight:bold"':''}}>${{f.interval!==null?f.interval.toFixed(3):'-'}}</td></tr>`,type:f.type,kf:f.kf,isAnomaly:f.interval!==null&&f.interval>33}}));
+  const allR=VF.map((f,i)=>({{html:`<tr class="${{f.kf?'kf':''}}${{f.interval!==null&&f.interval>ANOMALY_THRESHOLD_MS?' interval-anomaly':''}}"><td>${{i}}</td><td>${{(f.pts_t*90000).toFixed(0)}}</td><td>${{f.pts_t.toFixed(6)}}</td><td>${{(f.dts_t*90000).toFixed(0)}}</td><td>${{f.dts_t.toFixed(6)}}</td><td>${{(f.dts_pts*1000).toFixed(2)}}</td><td class="type-${{f.type}}">${{f.type}}</td><td>${{f.kf?'✅':'-'}}</td><td>${{(f.dur*1000).toFixed(2)}}</td><td>${{f.size.toLocaleString()}}</td><td${{f.interval!==null&&f.interval>ANOMALY_THRESHOLD_MS?' style="color:#f87171;font-weight:bold"':''}}>${{f.interval!==null?f.interval.toFixed(3):'-'}}</td></tr>`,type:f.type,kf:f.kf,isAnomaly:f.interval!==null&&f.interval>ANOMALY_THRESHOLD_MS}}));
   let filtered=[...allR],shown=Math.min(200,filtered.length);
   function render(){{tbody.innerHTML=filtered.slice(0,shown).map(r=>r.html).join('');}}
   render();
