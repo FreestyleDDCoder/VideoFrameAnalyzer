@@ -828,8 +828,35 @@ def generate_html_report(filepath, analyzer):
           <div class="ch">占比 {vs.get('interval_anomaly_ratio',0)*100:.2f}%</div></div>
         <div class="card"><div class="cl">交织帧</div><div class="cv o">{vs.get('interlaced_count',0):,}</div></div>
       </div>
-      <div class="chart-box"><canvas id="chartPtsDts"></canvas></div>
-      <div class="chart-box"><canvas id="chartPtsIv"></canvas></div>
+      <div class="legend-row">
+        <span class="legend-chip"><span class="legend-dot red"></span>PTS</span>
+        <span class="legend-chip"><span class="legend-dot blue"></span>DTS</span>
+        <span class="legend-chip"><span class="legend-dot anomaly"></span>异常帧 (&gt;{anomaly_threshold_ms}ms)</span>
+      </div>
+      <div class="chart-toolbar" id="frameChartControls">
+        <div class="toolbar-group">
+          <span class="toolbar-label">图表视窗</span>
+          <input type="number" id="frameWindowStart" min="0" value="0">
+          <span class="toolbar-sep">—</span>
+          <input type="number" id="frameWindowEnd" min="0" value="{max(len(vf)-1, 0)}">
+          <button type="button" id="applyFrameWindow">应用区间</button>
+          <button type="button" class="range-preset" data-span="200">最近200帧</button>
+          <button type="button" class="range-preset" data-span="500">最近500帧</button>
+          <button type="button" class="range-preset" data-span="1000">最近1000帧</button>
+          <button type="button" id="resetFrameWindow">全量</button>
+        </div>
+        <div class="toolbar-note">支持滚轮缩放、按住拖拽平移；所有帧序号图表会同步切换视窗</div>
+      </div>
+      <div class="chart-grid chart-grid-2">
+        <div class="chart-panel emphasis">
+          <div class="chart-head"><h3>PTS / DTS 轨迹</h3><div class="chart-note">异常帧以高亮圆点叠加在时序轨迹上</div></div>
+          <div class="chart-box tall"><canvas id="chartPtsDts"></canvas></div>
+        </div>
+        <div class="chart-panel">
+          <div class="chart-head"><h3>PTS 间隔波动</h3><div class="chart-note">异常帧点会单独高亮，便于快速定位跳变</div></div>
+          <div class="chart-box tall"><canvas id="chartPtsIv"></canvas></div>
+        </div>
+      </div>
     </div>""")
 
     # ── 帧类型 ──
@@ -843,9 +870,21 @@ def generate_html_report(filepath, analyzer):
         <div class="card"><div class="cl">帧大小 P50/P95/P99</div><div class="cv" style="font-size:14px">{vs.get('frame_size_p50',0)}/{vs.get('frame_size_p95',0)}/{vs.get('frame_size_p99',0)}</div>
           <div class="ch">max {vs.get('max_frame_size',0):,}B · min {vs.get('min_frame_size',0)}B</div></div>
       </div>
-      <div class="chart-row">
-        <div class="chart-box half"><canvas id="chartPictPie"></canvas></div>
-        <div class="chart-box half"><canvas id="chartFrameType"></canvas></div>
+      <div class="legend-row">
+        <span class="legend-chip"><span class="legend-dot red"></span>I 帧</span>
+        <span class="legend-chip"><span class="legend-dot yellow"></span>P 帧</span>
+        <span class="legend-chip"><span class="legend-dot green"></span>B 帧</span>
+        <span class="legend-chip"><span class="legend-dot anomaly"></span>异常帧边框高亮</span>
+      </div>
+      <div class="chart-grid chart-grid-2">
+        <div class="chart-panel">
+          <div class="chart-head"><h3>帧类型占比</h3><div class="chart-note">展示 I / P / B 的总体构成</div></div>
+          <div class="chart-box half"><canvas id="chartPictPie"></canvas></div>
+        </div>
+        <div class="chart-panel emphasis">
+          <div class="chart-head"><h3>帧类型时间线</h3><div class="chart-note">异常帧会保留原类型颜色，并用亮色边框标出</div></div>
+          <div class="chart-box half"><canvas id="chartFrameType"></canvas></div>
+        </div>
       </div>
     </div>""")
 
@@ -859,7 +898,10 @@ def generate_html_report(filepath, analyzer):
         <div class="card"><div class="cl">GOP 范围</div><div class="cv">{vs.get('min_gop_size',0)} — {vs.get('max_gop_size',0)}</div></div>
         <div class="card"><div class="cl">GOP 总数</div><div class="cv p">{len(vs['gop_sizes'])}</div></div>
       </div>
-      <div class="chart-box"><canvas id="chartGop"></canvas></div>
+      <div class="chart-panel">
+        <div class="chart-head"><h3>GOP 分布</h3><div class="chart-note">较大的 GOP 会自动用暖色强调</div></div>
+        <div class="chart-box"><canvas id="chartGop"></canvas></div>
+      </div>
     </div>""")
 
     # ── Packet 码率 (精确) ──
@@ -872,7 +914,10 @@ def generate_html_report(filepath, analyzer):
         <div class="card"><div class="cl">视频平均码率</div><div class="cv r">{pb.get('video_avg_kbps',0):.0f} kbps</div></div>
         <div class="card"><div class="cl">音频平均码率</div><div class="cv g">{pb.get('audio_avg_kbps',0):.0f} kbps</div></div>
       </div>
-      <div class="chart-box"><canvas id="chartPacketBitrate"></canvas></div>
+      <div class="chart-panel">
+        <div class="chart-head"><h3>Packet 窗口码率</h3><div class="chart-note">精确码率按时间窗口绘制，方便观察峰值与抖动</div></div>
+        <div class="chart-box"><canvas id="chartPacketBitrate"></canvas></div>
+      </div>
     </div>""")
 
     # ── 帧级码率 ──
@@ -880,8 +925,21 @@ def generate_html_report(filepath, analyzer):
         br_json = json.dumps(vs['bitrate_windows'], separators=(',',':'))
         sections.append(f"""
     <div class="sec"><h2>📉 帧级码率曲线</h2>
-      <div class="chart-box"><canvas id="chartBitrate"></canvas></div>
-      <div class="chart-box"><canvas id="chartFrameSize"></canvas></div>
+      <div class="legend-row">
+        <span class="legend-chip"><span class="legend-dot cyan"></span>窗口码率</span>
+        <span class="legend-chip"><span class="legend-dot orange"></span>帧大小</span>
+        <span class="legend-chip"><span class="legend-dot anomaly"></span>异常帧大小点</span>
+      </div>
+      <div class="chart-grid chart-grid-2">
+        <div class="chart-panel">
+          <div class="chart-head"><h3>窗口码率曲线</h3><div class="chart-note">按滑动窗口汇总码率，用于观察整体带宽波动</div></div>
+          <div class="chart-box"><canvas id="chartBitrate"></canvas></div>
+        </div>
+        <div class="chart-panel emphasis">
+          <div class="chart-head"><h3>逐帧大小曲线</h3><div class="chart-note">异常帧会以独立点层单独标出</div></div>
+          <div class="chart-box"><canvas id="chartFrameSize"></canvas></div>
+        </div>
+      </div>
     </div>""")
 
     # ── 帧间隔直方图 ──
@@ -889,7 +947,10 @@ def generate_html_report(filepath, analyzer):
         hist_json_data = json.dumps(vs['interval_histogram'])
         sections.append(f"""
     <div class="sec"><h2>📊 PTS 间隔分布</h2>
-      <div class="chart-box"><canvas id="chartHist"></canvas></div>
+      <div class="chart-panel">
+        <div class="chart-head"><h3>帧间隔直方图</h3><div class="chart-note">超过 {anomaly_threshold_ms}ms 的区间柱会自动用异常色强调</div></div>
+        <div class="chart-box"><canvas id="chartHist"></canvas></div>
+      </div>
     </div>""")
 
     # ── 时间戳健康 ──
@@ -1053,24 +1114,55 @@ def generate_html_report(filepath, analyzer):
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
 :root{{--bg:#0a0c10;--card:#12151d;--card2:#181c28;--border:#1e2233;--text:#e0e2ea;--muted:#6b7088;
---accent:#5b7fff;--green:#2dd4a0;--red:#f87171;--yellow:#fbbf24;--purple:#a78bfa;--blue:#60a5fa;--cyan:#22d3ee;--orange:#fb923c}}
+--accent:#5b7fff;--green:#2dd4a0;--red:#f87171;--yellow:#fbbf24;--purple:#a78bfa;--blue:#60a5fa;--cyan:#22d3ee;--orange:#fb923c;--rose:#fb7185;--shadow:0 18px 40px rgba(0,0,0,.28)}}
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}}
-.hdr{{background:linear-gradient(135deg,#151822,#0c0e14);border-bottom:1px solid var(--border);padding:20px 28px}}
+body{{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:
+radial-gradient(circle at top right,rgba(96,165,250,.08),transparent 28%),
+radial-gradient(circle at top left,rgba(167,139,250,.08),transparent 24%),
+linear-gradient(180deg,#090b10 0%,#0a0c10 100%);color:var(--text);line-height:1.6}}
+.hdr{{background:linear-gradient(135deg,rgba(21,24,34,.95),rgba(12,14,20,.98));border-bottom:1px solid rgba(91,127,255,.18);padding:24px 30px;box-shadow:var(--shadow)}}
 .hdr h1{{font-size:20px;font-weight:700}}.hdr .sub{{font-size:12px;color:var(--muted);margin-top:2px}}
-.wrap{{max-width:1400px;margin:0 auto;padding:16px}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px}}
+.wrap{{max-width:1520px;margin:0 auto;padding:22px 20px 28px}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:18px}}
 .cards.tight{{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}}
-.card{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}}
-.card.accent{{border-color:var(--accent)}}
+.card{{background:linear-gradient(180deg,rgba(18,21,29,.98),rgba(14,17,24,.98));border:1px solid rgba(30,34,51,.92);border-radius:12px;padding:14px;box-shadow:0 10px 28px rgba(0,0,0,.18)}}
+.card.accent{{border-color:rgba(91,127,255,.45);box-shadow:0 12px 30px rgba(91,127,255,.12)}}
 .cl{{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}}
 .cv{{font-size:22px;font-weight:700}}.cv.r{{color:var(--red)}}.cv.g{{color:var(--green)}}.cv.y{{color:var(--yellow)}}
 .cv.p{{color:var(--purple)}}.cv.c{{color:var(--cyan)}}.cv.b{{color:var(--blue)}}.cv.o{{color:var(--orange)}}
 .ch{{font-size:10px;color:var(--muted);margin-top:2px}}
-.sec{{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}}
-.sec h2{{font-size:15px;font-weight:600;margin-bottom:4px}}.desc{{font-size:12px;color:var(--muted);margin-bottom:12px}}
-.chart-box{{position:relative;height:300px;margin-bottom:8px}}.chart-box.half{{height:260px}}
-.chart-row{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+.sec{{background:linear-gradient(180deg,rgba(18,21,29,.98),rgba(13,16,24,.98));border:1px solid rgba(30,34,51,.92);border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:var(--shadow)}}
+.sec h2{{font-size:15px;font-weight:600;margin-bottom:6px}}.desc{{font-size:12px;color:var(--muted);margin-bottom:12px}}
+.chart-grid{{display:grid;gap:14px}}
+.chart-grid-2{{grid-template-columns:1fr}}
+.chart-row{{display:grid;grid-template-columns:1fr;gap:14px}}
+.chart-panel{{background:linear-gradient(180deg,rgba(24,28,40,.9),rgba(17,20,29,.96));border:1px solid rgba(53,60,88,.65);border-radius:14px;padding:14px 14px 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}}
+.chart-panel.emphasis{{border-color:rgba(248,113,113,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 0 0 1px rgba(248,113,113,.05)}}
+.chart-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}}
+.chart-head h3{{font-size:13px;font-weight:600}}
+.chart-note{{font-size:11px;color:var(--muted);text-align:right;max-width:240px}}
+.chart-box{{position:relative;height:300px;margin-bottom:0}}
+.chart-box.half{{height:260px}}
+.chart-box.tall{{height:320px}}
+.legend-row{{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}}
+.legend-chip{{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(24,28,40,.84);border:1px solid rgba(53,60,88,.6);font-size:11px;color:var(--text)}}
+.legend-dot{{width:10px;height:10px;border-radius:50%;display:inline-block}}
+.legend-dot.red{{background:var(--red)}}
+.legend-dot.blue{{background:var(--blue)}}
+.legend-dot.green{{background:var(--green)}}
+.legend-dot.yellow{{background:var(--yellow)}}
+.legend-dot.cyan{{background:var(--cyan)}}
+.legend-dot.orange{{background:var(--orange)}}
+.legend-dot.anomaly{{background:var(--rose);box-shadow:0 0 0 2px rgba(255,255,255,.65) inset}}
+.chart-toolbar{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 14px;padding:10px 12px;border:1px solid rgba(53,60,88,.6);border-radius:12px;background:rgba(24,28,40,.72)}}
+.toolbar-group{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
+.toolbar-label{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-right:4px}}
+.toolbar-sep{{font-size:12px;color:var(--muted)}}
+.toolbar-note{{font-size:11px;color:var(--muted)}}
+.chart-toolbar input{{width:92px;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12px;outline:none}}
+.chart-toolbar button{{background:rgba(91,127,255,.12);border:1px solid rgba(91,127,255,.35);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12px;cursor:pointer;transition:.15s ease}}
+.chart-toolbar button:hover{{background:rgba(91,127,255,.2);border-color:rgba(91,127,255,.55)}}
+.chart-toolbar button.active{{background:rgba(45,212,160,.14);border-color:rgba(45,212,160,.38);color:#d9fff0}}
 .info-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px;margin:12px 0}}
 .info-grid div{{display:flex;gap:8px;font-size:13px}}.il{{color:var(--muted);min-width:80px}}.iv{{color:var(--text)}}
 .tbl-wrap{{overflow-x:auto;max-height:500px;overflow-y:auto;border-radius:8px;border:1px solid var(--border)}}
@@ -1105,7 +1197,7 @@ tr:hover td{{background:rgba(91,127,255,.05)}}
 .summary-list{{display:grid;gap:4px}}
 .sum-item{{font-size:12px;color:var(--text);padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)}}
 .footer{{text-align:center;font-size:10px;color:var(--muted);padding:16px;opacity:.5}}
-@media(max-width:768px){{.cards{{grid-template-columns:repeat(2,1fr)}}.chart-row{{grid-template-columns:1fr}}}}
+@media(max-width:768px){{.cards{{grid-template-columns:repeat(2,1fr)}}.chart-row{{grid-template-columns:1fr}}.chart-head{{flex-direction:column}}.chart-note{{text-align:left;max-width:none}}.wrap{{padding:16px 12px 22px}}.chart-toolbar{{align-items:flex-start}}}}
 </style></head><body>
 <div class="hdr"><h1>🎬 视频帧级分析报告</h1>
 <div class="sub">{filename} · {fmt_size(filesize)} · {fmt_dur(ci_dur)} · 生成于 {now_str}</div></div>
@@ -1118,22 +1210,158 @@ Chart.defaults.color='#6b7088';Chart.defaults.borderColor='#1e2233';Chart.defaul
 const o={{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}}}},
 scales:{{x:{{grid:{{color:'#ffffff05'}},ticks:{{maxTicksLimit:18}}}},y:{{grid:{{color:'#ffffff08'}}}}}},
 elements:{{point:{{radius:0}},line:{{borderWidth:1.5}}}}}};
+const chartLegend={{display:true,position:'top',labels:{{usePointStyle:true,padding:10,boxWidth:10}}}};
+const frameCharts=[];
+const DISPLAY_VF=VF.length;
+const isAnomalyFrame=f=>f.interval!==null&&f.interval>ANOMALY_THRESHOLD_MS;
+const anomalyLabel='异常帧 (>'+ANOMALY_THRESHOLD_MS+'ms)';
+const anomalyPts=VF.map(f=>isAnomalyFrame(f)?f.pts_t:null);
+const anomalyDts=VF.map(f=>isAnomalyFrame(f)?f.dts_t:null);
+const anomalyIntervals=VF.slice(1).map(f=>isAnomalyFrame(f)?f.interval:null);
+const anomalySizes=VF.map(f=>isAnomalyFrame(f)?f.size:null);
+let frameWindow={{min:0,max:Math.max(DISPLAY_VF-1,0)}};
+
+function clampFrameWindow(min,max){{
+  const hardMax=Math.max(DISPLAY_VF-1,0);
+  if(hardMax<=0)return {{min:0,max:0}};
+  min=Math.round(Number(min));
+  max=Math.round(Number(max));
+  if(!Number.isFinite(min))min=0;
+  if(!Number.isFinite(max))max=hardMax;
+  if(min>max){{const t=min; min=max; max=t;}}
+  const minSpan=Math.min(20, hardMax+1);
+  if(max-min+1<minSpan)max=min+minSpan-1;
+  if(min<0){{max-=min; min=0;}}
+  if(max>hardMax){{min-=max-hardMax; max=hardMax;}}
+  if(min<0)min=0;
+  return {{min,max}};
+}}
+
+function applyFrameWindowToChart(chart){{
+  const labels=chart.data?.labels||[];
+  if(!labels.length)return;
+  const offset=chart.$frameOffset||0;
+  const chartMax=offset+labels.length-1;
+  const min=Math.max(offset, frameWindow.min);
+  const max=Math.min(chartMax, frameWindow.max);
+  chart.options.scales.x.min=min;
+  chart.options.scales.x.max=max;
+  chart.update('none');
+}}
+
+function syncFrameWindowInputs(){{
+  const s=document.getElementById('frameWindowStart');
+  const e=document.getElementById('frameWindowEnd');
+  if(s)s.value=frameWindow.min;
+  if(e)e.value=frameWindow.max;
+}}
+
+function setFrameWindow(min,max){{
+  frameWindow=clampFrameWindow(min,max);
+  syncFrameWindowInputs();
+  frameCharts.forEach(applyFrameWindowToChart);
+}}
+
+function zoomFrameWindow(center, factor){{
+  const hardMax=Math.max(DISPLAY_VF-1,0);
+  if(hardMax<=0)return;
+  const span=frameWindow.max-frameWindow.min+1;
+  let nextSpan=Math.round(span*factor);
+  nextSpan=Math.max(Math.min(20, hardMax+1), Math.min(hardMax+1, nextSpan));
+  const nextMin=Math.round(center-nextSpan/2);
+  setFrameWindow(nextMin, nextMin+nextSpan-1);
+}}
+
+function chartFrameFromEvent(chart, event){{
+  const scale=chart.scales?.x;
+  if(!scale)return null;
+  const rect=chart.canvas.getBoundingClientRect();
+  const x=event.clientX-rect.left;
+  if(x<scale.left||x>scale.right)return null;
+  const visibleMin=Number.isFinite(scale.min)?Number(scale.min):(chart.$frameOffset||0);
+  const visibleMax=Number.isFinite(scale.max)?Number(scale.max):(chart.$frameOffset||0)+(chart.data.labels?.length||1)-1;
+  const ratio=(x-scale.left)/Math.max(scale.right-scale.left,1);
+  return Math.round(visibleMin+ratio*(visibleMax-visibleMin));
+}}
+
+function attachFrameChartInteractions(chart){{
+  if(chart.$navBound)return;
+  chart.$navBound=true;
+  chart.canvas.addEventListener('wheel',event=>{{
+    if(!DISPLAY_VF)return;
+    event.preventDefault();
+    const center=chartFrameFromEvent(chart,event);
+    if(center===null)return;
+    zoomFrameWindow(center, event.deltaY<0?0.8:1.25);
+  }},{{passive:false}});
+  let dragStart=null;
+  chart.canvas.addEventListener('mousedown',event=>{{
+    const center=chartFrameFromEvent(chart,event);
+    if(center===null)return;
+    dragStart={{x:event.clientX,min:frameWindow.min,max:frameWindow.max}};
+    chart.canvas.style.cursor='grabbing';
+  }});
+  window.addEventListener('mousemove',event=>{{
+    if(!dragStart)return;
+    const scale=chart.scales?.x;
+    if(!scale)return;
+    const pixelsPerFrame=Math.max((scale.right-scale.left)/Math.max(frameWindow.max-frameWindow.min+1,1),1);
+    const deltaFrames=Math.round((event.clientX-dragStart.x)/pixelsPerFrame);
+    setFrameWindow(dragStart.min-deltaFrames, dragStart.max-deltaFrames);
+  }});
+  window.addEventListener('mouseup',()=>{{
+    if(dragStart)chart.canvas.style.cursor='';
+    dragStart=null;
+  }});
+}}
+
+function registerFrameChart(chart, offset=0){{
+  chart.$frameOffset=offset;
+  frameCharts.push(chart);
+  applyFrameWindowToChart(chart);
+  attachFrameChartInteractions(chart);
+}}
+
+function initFrameNavigator(){{
+  const startInput=document.getElementById('frameWindowStart');
+  const endInput=document.getElementById('frameWindowEnd');
+  const applyBtn=document.getElementById('applyFrameWindow');
+  const resetBtn=document.getElementById('resetFrameWindow');
+  if(startInput)startInput.max=Math.max(DISPLAY_VF-1,0);
+  if(endInput)endInput.max=Math.max(DISPLAY_VF-1,0);
+  syncFrameWindowInputs();
+  applyBtn?.addEventListener('click',()=>setFrameWindow(startInput?.value, endInput?.value));
+  resetBtn?.addEventListener('click',()=>setFrameWindow(0, Math.max(DISPLAY_VF-1,0)));
+  document.querySelectorAll('.range-preset').forEach(btn=>btn.addEventListener('click',()=>{{
+    const span=Math.max(1, parseInt(btn.dataset.span||'0',10)||0);
+    const hardMax=Math.max(DISPLAY_VF-1,0);
+    const min=Math.max(0, hardMax-span+1);
+    document.querySelectorAll('.range-preset').forEach(node=>node.classList.remove('active'));
+    btn.classList.add('active');
+    setFrameWindow(min, hardMax);
+  }}));
+}}
 
 // PTS vs DTS
 if(VF.length>0 && document.getElementById('chartPtsDts')){{
-  new Chart(document.getElementById('chartPtsDts'),{{type:'line',data:{{labels:VF.map((_,i)=>i),datasets:[
-    {{label:'PTS',data:VF.map(f=>f.pts_t),borderColor:'#f87171',fill:false}},
-    {{label:'DTS',data:VF.map(f=>f.dts_t),borderColor:'#60a5fa',fill:false}}]}},
-    options:{{...o,plugins:{{legend:{{display:true,position:'top',labels:{{usePointStyle:true,padding:10}}}}}},
+  const chartPtsDts=new Chart(document.getElementById('chartPtsDts'),{{type:'line',data:{{labels:VF.map((_,i)=>i),datasets:[
+    {{label:'PTS',data:VF.map(f=>f.pts_t),borderColor:'#f87171',backgroundColor:'rgba(248,113,113,.1)',fill:false,tension:.18}},
+    {{label:'DTS',data:VF.map(f=>f.dts_t),borderColor:'#60a5fa',backgroundColor:'rgba(96,165,250,.1)',fill:false,tension:.18}},
+    {{label:anomalyLabel,data:anomalyPts,showLine:false,spanGaps:false,pointRadius:4,pointHoverRadius:5,pointBackgroundColor:'#fb7185',pointBorderColor:'#ffffff',pointBorderWidth:1.5,borderWidth:0}},
+    {{label:'异常帧 DTS',data:anomalyDts,showLine:false,spanGaps:false,pointRadius:3,pointHoverRadius:4,pointBackgroundColor:'#ffffff',pointBorderColor:'#60a5fa',pointBorderWidth:1.5,borderWidth:0}}]}},
+    options:{{...o,plugins:{{legend:chartLegend}},
       scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{title:{{display:true,text:'时间(秒)'}}}}}}}}}});
+  registerFrameChart(chartPtsDts,0);
 }}
 
 // PTS interval
 if(VF.length>1 && document.getElementById('chartPtsIv')){{
   const iv=[];for(let i=1;i<VF.length;i++)iv.push((VF[i].pts_t-VF[i-1].pts_t)*1000);
-  new Chart(document.getElementById('chartPtsIv'),{{type:'line',data:{{labels:VF.slice(1).map((_,i)=>i+1),datasets:[
-    {{label:'PTS间隔(ms)',data:iv,borderColor:'#2dd4a0',backgroundColor:'rgba(45,212,160,0.08)',fill:true}}]}},
-    options:{{...o,scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{title:{{display:true,text:'ms'}}}}}}}}}});
+  const chartPtsIv=new Chart(document.getElementById('chartPtsIv'),{{type:'line',data:{{labels:VF.slice(1).map((_,i)=>i+1),datasets:[
+    {{label:'PTS间隔(ms)',data:iv,borderColor:'#2dd4a0',backgroundColor:'rgba(45,212,160,0.08)',fill:true,tension:.22}},
+    {{label:anomalyLabel,data:anomalyIntervals,showLine:false,spanGaps:false,pointRadius:4,pointHoverRadius:5,pointBackgroundColor:'#fb7185',pointBorderColor:'#fff',pointBorderWidth:1.5,borderWidth:0}}]}},
+    options:{{...o,plugins:{{legend:chartLegend}},scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{title:{{display:true,text:'ms'}}}}}}}}}});
+  registerFrameChart(chartPtsIv,1);
 }}
 
 // Pie
@@ -1146,10 +1374,13 @@ if(document.getElementById('chartPictPie')){{
 // Frame type timeline
 if(VF.length>0 && document.getElementById('chartFrameType')){{
   const tc={{'I':'#f87171','P':'#fbbf24','B':'#2dd4a0'}},tn={{'I':3,'P':2,'B':1}};
-  new Chart(document.getElementById('chartFrameType'),{{type:'bar',
-    data:{{labels:VF.map((_,i)=>i),datasets:[{{data:VF.map(f=>tn[f.type]||0),backgroundColor:VF.map(f=>tc[f.type]||'#555'),borderWidth:0,barPercentage:1,borderRadius:0}}]}},
-    options:{{...o,scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{ticks:{{callback:v=>({{3:'I',2:'P',1:'B'}})[v]||''}},min:0,max:4}}}},
-      plugins:{{tooltip:{{callbacks:{{label:ctx=>VF[ctx.dataIndex]?.type}}}}}}}}}});
+  const chartFrameType=new Chart(document.getElementById('chartFrameType'),{{type:'bar',
+    data:{{labels:VF.map((_,i)=>i),datasets:[{{label:'帧类型时间线',data:VF.map(f=>tn[f.type]||0),backgroundColor:VF.map(f=>tc[f.type]||'#555'),borderColor:VF.map(f=>isAnomalyFrame(f)?'#ffe4e6':'transparent'),borderWidth:VF.map(f=>isAnomalyFrame(f)?1.5:0),barPercentage:1,borderRadius:0}}]}},
+    options:{{...o,
+      scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{ticks:{{callback:v=>({{3:'I',2:'P',1:'B'}})[v]||''}},min:0,max:4}}}},
+      plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:ctx=>((VF[ctx.dataIndex]&&VF[ctx.dataIndex].type)||'-')+((VF[ctx.dataIndex]&&isAnomalyFrame(VF[ctx.dataIndex]))?' · 异常帧':'')}}}}}}
+    }}}});
+  registerFrameChart(chartFrameType,0);
 }}
 
 // GOP
@@ -1175,22 +1406,29 @@ if((PB_V.length>0||PB_A.length>0) && document.getElementById('chartPacketBitrate
 if(BR.length>0 && document.getElementById('chartBitrate')){{
   new Chart(document.getElementById('chartBitrate'),{{type:'line',
     data:{{labels:BR.map(b=>b.time.toFixed(1)+'s'),datasets:[{{label:'kbps',data:BR.map(b=>b.kbps),borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,0.1)',fill:true,tension:.3}}]}},
-    options:{{...o,scales:{{x:{{title:{{display:true,text:'时间(s)'}}}},y:{{title:{{display:true,text:'kbps'}}}}}}}}}});
+    options:{{...o,plugins:{{legend:chartLegend}},scales:{{x:{{title:{{display:true,text:'时间(s)'}}}},y:{{title:{{display:true,text:'kbps'}}}}}}}}}});
 }}
 
 // Frame size
 if(VF.length>0 && document.getElementById('chartFrameSize')){{
-  new Chart(document.getElementById('chartFrameSize'),{{type:'line',
-    data:{{labels:VF.map((_,i)=>i),datasets:[{{label:'字节',data:VF.map(f=>f.size),borderColor:'#fb923c',backgroundColor:'rgba(251,146,60,0.08)',fill:true}}]}},
-    options:{{...o,scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{title:{{display:true,text:'字节'}}}}}}}}}});
+  const chartFrameSize=new Chart(document.getElementById('chartFrameSize'),{{type:'line',
+    data:{{labels:VF.map((_,i)=>i),datasets:[
+      {{label:'字节',data:VF.map(f=>f.size),borderColor:'#fb923c',backgroundColor:'rgba(251,146,60,0.08)',fill:true,tension:.18}},
+      {{label:anomalyLabel,data:anomalySizes,showLine:false,spanGaps:false,pointRadius:4,pointHoverRadius:5,pointBackgroundColor:'#fb7185',pointBorderColor:'#fff',pointBorderWidth:1.5,borderWidth:0}}]}},
+    options:{{...o,plugins:{{legend:chartLegend}},scales:{{x:{{title:{{display:true,text:'帧序号'}}}},y:{{title:{{display:true,text:'字节'}}}}}}}}}});
+  registerFrameChart(chartFrameSize,0);
 }}
 
 // Histogram
 if(Object.keys(HIST).length>0 && document.getElementById('chartHist')){{
   const kl=Object.keys(HIST).map(Number).sort((a,b)=>a-b);
   new Chart(document.getElementById('chartHist'),{{type:'bar',
-    data:{{labels:kl.map(k=>k+'ms'),datasets:[{{data:kl.map(k=>HIST[k]),backgroundColor:'#5b7fff',borderRadius:2}}]}},
-    options:{{...o,plugins:{{tooltip:{{callbacks:{{label:ctx=>ctx.parsed.y.toLocaleString()+' 帧'}}}}}}}}}});
+    data:{{labels:kl.map(k=>k+'ms'),datasets:[{{data:kl.map(k=>HIST[k]),backgroundColor:kl.map(k=>k>ANOMALY_THRESHOLD_MS?'rgba(251,113,133,.88)':'#5b7fff'),borderRadius:2}}]}},
+    options:{{...o,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:ctx=>ctx.parsed.y.toLocaleString()+' 帧'}}}}}}}}}});
+}}
+
+if(frameCharts.length>0){{
+  initFrameNavigator();
 }}
 
 // Frame table
@@ -1455,9 +1693,11 @@ class VideoAnalyzerApp:
         )
         if path:
             self.filepath.set(path)
-            if not self.output_path.get():
-                base = os.path.splitext(path)[0]
-                self.output_path.set(base + "_report.html")
+            self.output_path.set(self._default_output_path(path))
+
+    def _default_output_path(self, video_path):
+        base = os.path.splitext(video_path)[0]
+        return base + "_report.html"
 
     def _browse_ffprobe(self):
         path = filedialog.askopenfilename(
@@ -1520,8 +1760,7 @@ class VideoAnalyzerApp:
 
         out = self.output_path.get().strip()
         if not out:
-            base = os.path.splitext(fp)[0]
-            out = base + "_report.html"
+            out = self._default_output_path(fp)
             self.output_path.set(out)
 
         ffprobe = self.ffprobe_path_var.get().strip()
